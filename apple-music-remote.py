@@ -33,6 +33,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterator, Optional
+from urllib.parse import parse_qs, urlparse
 
 import uiautomation
 from comtypes import CoInitialize
@@ -103,7 +104,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
                   border-radius:50%;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.45)}
 #pr{width:100%;height:5px}
 #pr::-webkit-slider-thumb{width:17px;height:17px}
-#view-pls,#view-trs{padding-top:calc(env(safe-area-inset-top,0px) + 56px)}
+#sq{width:100%;padding:12px 16px;border-radius:12px;border:none;outline:none;font-size:1rem;
+    background:rgba(255,255,255,.12);color:#fff;margin-bottom:12px;-webkit-appearance:none;
+    font-family:inherit}
+#sq::placeholder{color:rgba(255,255,255,.4)}
+#view-pls,#view-trs,#view-src,#view-que{padding-top:calc(env(safe-area-inset-top,0px) + 56px)}
 .listwrap{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:540px;
           margin:0 auto;padding:6px 16px calc(env(safe-area-inset-bottom,0px) + 30px)}
 .row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:14px;
@@ -129,7 +134,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
 <header>
 <button id=hbtn></button>
 <div id=htitle></div>
-<div class=hspace></div>
+<span id=hright><button id=qbtn onclick="openQue()"></button><button id=sbtn onclick="openSrc()"></button></span>
 </header>
 
 <div class=view id=view-now>
@@ -156,6 +161,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
 
 <div class="view off" id=view-pls><div class=listwrap id=pls-list></div></div>
 <div class="view off" id=view-trs><div class=listwrap id=trs-list></div></div>
+<div class="view off" id=view-src><div class=listwrap>
+<input id=sq type=search enterkeyhint=search placeholder="Search Apple Music"
+       onkeydown="if(event.key==='Enter')doSearch()">
+<div id=src-list></div>
+</div></div>
+<div class="view off" id=view-que><div class=listwrap id=que-list></div></div>
 
 <script>
 const $=i=>document.getElementById(i);
@@ -167,14 +178,38 @@ const CHEV='<svg class=chev viewBox="0 0 24 24"><path d="M9 4l8 8-8 8-1.6-1.6L13
 const SHUF='<svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.42 1.42 3.14 3.14L14.5 20H20v-5.5l-2.04 2.05-3.13-3.14z"/></svg>';
 const REP='<svg viewBox="0 0 24 24"><path d="M17 17H7v-3l-4 4 4 4v-3h12v-6h-2v4zM7 7h10v3l4-4-4-4v3H5v6h2V7z"/></svg>';
 const REP1='<svg viewBox="0 0 24 24"><path d="M13 15V9h-1l-2 1v1h1.5v4H13zM17 17H7v-3l-4 4 4 4v-3h12v-6h-2v4zM7 7h10v3l4-4-4-4v3H5v6h2V7z"/></svg>';
+const SEARCHICON='<svg viewBox="0 0 24 24"><path d="M10 2a8 8 0 105.29 14.03l4.34 4.34 1.41-1.41-4.34-4.34A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>';
+const QUEUEICON='<svg viewBox="0 0 24 24"><path d="M3 5h12v2H3zM3 10h12v2H3zM3 15h7v2H3zM16.5 12.5l6 3.5-6 3.5z"/></svg>';
 function esc(s){return(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 let last='',dragTs=0,pos=0,dur=0,posTs=0,playing=false,scrubbing=false,seekTs=0,nowTitle='';
-let view='now',curPl=-1,plsData=null;const trCache={};
+let view='now',curPl=-1,plsData=null,srcItems=[],lastQ='';const trCache={};
 
-function show(v){view=v;['now','pls','trs'].forEach(x=>$('view-'+x).classList.toggle('off',x!==v));
+function show(v){view=v;['now','pls','trs','src','que'].forEach(x=>$('view-'+x).classList.toggle('off',x!==v));
   $('hbtn').innerHTML=v==='now'?LISTICON:BACKICON;
-  $('htitle').textContent=v==='pls'?'Playlists':v==='trs'?(plsData[curPl]||{}).name||'':''}
+  $('hright').style.visibility=v==='now'?'visible':'hidden';
+  $('htitle').textContent=v==='pls'?'Playlists':v==='trs'?(plsData[curPl]||{}).name||''
+    :v==='src'?'Search':v==='que'?'Up Next':''}
 $('hbtn').onclick=()=>{if(view==='now')openPls();else if(view==='trs')openPls();else show('now')};
+
+function openSrc(){show('src');setTimeout(()=>$('sq').focus(),250)}
+async function doSearch(){const q=$('sq').value.trim();if(!q)return;lastQ=q;$('sq').blur();
+  const el=$('src-list');el.innerHTML='<div class=spin></div>';
+  try{const r=await(await fetch('/search?q='+encodeURIComponent(q))).json();if(!r.ok)throw 0;srcItems=r.items;
+    el.innerHTML=srcItems.map((t,j)=>'<div class=row onclick="splay('+j+',this)">'
+      +'<div class=rt><b>'+esc(t.t)+'</b><span>'+esc(t.a)+'</span></div></div>').join('')
+      ||'<div class=hint>No results</div>'}
+  catch(e){el.innerHTML='<div class=hint>Search failed</div>'}}
+async function splay(j,el){el.classList.add('busy');
+  try{await fetch('/splay',{method:'POST',body:JSON.stringify({q:lastQ,i:j,id:srcItems[j].id})})}catch(e){}
+  el.classList.remove('busy');show('now');setTimeout(poll,1200)}
+
+async function openQue(){show('que');const el=$('que-list');el.innerHTML='<div class=spin></div>';
+  try{const r=await(await fetch('/queue')).json();if(!r.ok)throw 0;
+    el.innerHTML=r.items.map(t=>'<div class=row style="cursor:default">'
+      +'<div class=rt><b>'+esc(t.t)+'</b><span>'+esc(t.a)+'</span></div>'
+      +'<div class=dur>'+esc(t.d)+'</div></div>').join('')
+      ||'<div class=hint>Queue is empty</div>'}
+  catch(e){el.innerHTML='<div class=hint>Could not read the queue</div>'}}
 
 async function openPls(){show('pls');const el=$('pls-list');
   if(!plsData){el.innerHTML='<div class=spin></div>';
@@ -240,6 +275,7 @@ function tick(){
     if(!scrubbing){let p=Math.min(pos+(playing?(Date.now()-posTs)/1000:0),dur);
       $('pr').value=p|0;$('cur').textContent=fmt(p);fill($('pr'),p,dur)}}
   else $('prog').style.visibility='hidden'}
+$('sbtn').innerHTML=SEARCHICON;$('qbtn').innerHTML=QUEUEICON;
 show('now');renderModes();setInterval(poll,2000);setInterval(tick,500);poll();loadModes();
 </script>"""
 
@@ -430,15 +466,8 @@ def _collect_tracks(track_list) -> list[dict]:
     return items
 
 
-def _play_track(window, track_list, row_id: str) -> None:
-    """Play one track: open its row menu and invoke the 'Play <title>' item."""
-    row = None
-    for rows in _walk_rows(track_list):
-        row = next((r for r in rows if r.Name == row_id), None)
-        if row:
-            break
-    if not row:
-        raise RuntimeError("track not found in playlist")
+def _invoke_row_play(window, row) -> None:
+    """Play a song row: open its "More" (…) menu and invoke 'Play <title>'."""
     try:
         row.GetScrollItemPattern().ScrollIntoView()
         time.sleep(0.3)
@@ -448,9 +477,11 @@ def _play_track(window, track_list, row_id: str) -> None:
     buttons = [b for b in grid.GetChildren() if b.ControlTypeName == "ButtonControl"]
     if not buttons:
         raise RuntimeError("row has no menu button")
-    buttons[-1].GetInvokePattern().Invoke()  # the "More" (…) menu
+    buttons[-1].GetInvokePattern().Invoke()
     time.sleep(0.8)
-    title = (_parse_row(row) or {}).get("t", "")
+    texts = [t.Name for t in grid.GetChildren()
+             if t.ControlTypeName == "TextControl" and t.Name]
+    title = texts[0] if texts else ""
     for item, _ in uiautomation.WalkControl(window, maxDepth=18):
         if item.ControlTypeName == "MenuItemControl":
             name = item.Name or ""
@@ -460,6 +491,59 @@ def _play_track(window, track_list, row_id: str) -> None:
                 item.GetInvokePattern().Invoke()
                 return
     raise RuntimeError("Play menu item not found")
+
+
+def _play_track(window, track_list, row_id: str) -> None:
+    row = None
+    for rows in _walk_rows(track_list):
+        row = next((r for r in rows if r.Name == row_id), None)
+        if row:
+            break
+    if not row:
+        raise RuntimeError("track not found in playlist")
+    _invoke_row_play(window, row)
+
+
+def _search_section(window, name: str):
+    """Find a named section ('Songs', 'Top Results', ...) on the results page."""
+    for control, _ in uiautomation.WalkControl(window, maxDepth=8):
+        if control.ControlTypeName == "GroupControl" and control.Name == "Content":
+            for section, _ in uiautomation.WalkControl(control, maxDepth=3):
+                if (section.ControlTypeName == "ListItemControl"
+                        and section.Name == name):
+                    return section
+            return None
+    return None
+
+
+def _do_search(window, query: str):
+    """Type into the sidebar search box, run the search, return the Songs
+    section (or None when the results contain no songs)."""
+    box = uiautomation.EditControl(searchFromControl=window, AutomationId="TextBox")
+    if not box.Exists(2):
+        raise RuntimeError("search box not found")
+    box.GetValuePattern().SetValue(query)
+    uiautomation.ButtonControl(searchFromControl=window,
+                               AutomationId="QueryButton").GetInvokePattern().Invoke()
+    time.sleep(1.0)  # let a previous results page clear before polling
+    for _ in range(20):
+        time.sleep(0.4)
+        songs = _search_section(window, "Songs")
+        if songs:
+            return songs
+        if _search_section(window, "Top Results"):
+            time.sleep(0.6)  # sections render one by one; give Songs one more beat
+            return _search_section(window, "Songs")
+    raise RuntimeError("search results did not load")
+
+
+def _search_rows(section) -> list:
+    rows = []
+    for control, _ in uiautomation.WalkControl(section, maxDepth=6):
+        if (control.ControlTypeName == "ListItemControl"
+                and control.Name and control.Name != section.Name):
+            rows.append(control)
+    return rows
 
 
 def _transport_button(window, automation_id: str):
@@ -525,6 +609,81 @@ def api_play(index: int, row_id: str) -> dict:
     return {"ok": True}
 
 
+def api_search(query: str) -> dict:
+    with UIA_LOCK, uiautomation.UIAutomationInitializerInThread():
+        window = _window()
+        section = _do_search(window, query)
+        items = []
+        for row in (_search_rows(section) if section else []):
+            kids = row.GetChildren()
+            grid = kids[0] if kids else None
+            texts = [t.Name for t in (grid.GetChildren() if grid else [])
+                     if t.ControlTypeName == "TextControl" and t.Name]
+            if texts:
+                items.append({"t": texts[0],
+                              "a": texts[1] if len(texts) > 1 else "",
+                              "id": row.Name})
+    return {"ok": True, "items": items}
+
+
+def api_search_play(query: str, index: int, row_id: str) -> dict:
+    """Re-run the search (results are deterministic) and play the chosen row.
+
+    Row names are not unique across results, so the row is matched by
+    position first and by name as a fallback.
+    """
+    with UIA_LOCK, uiautomation.UIAutomationInitializerInThread():
+        window = _window()
+        section = _do_search(window, query)
+        rows = _search_rows(section) if section else []
+        row = None
+        if 0 <= index < len(rows) and rows[index].Name == row_id:
+            row = rows[index]
+        else:
+            row = next((r for r in rows if r.Name == row_id), None)
+        if not row:
+            raise RuntimeError("search result not found")
+        _invoke_row_play(window, row)
+    return {"ok": True}
+
+
+def api_queue() -> dict:
+    """Read the Up Next panel. Opens it briefly if it isn't already open."""
+    with UIA_LOCK, uiautomation.UIAutomationInitializerInThread():
+        window = _window()
+        queue_list = uiautomation.ListControl(searchFromControl=window,
+                                              AutomationId="PlayQueueListViewAutoplay")
+        opened = False
+        if not queue_list.Exists(1):
+            button = _transport_button(window, "PlayQueueToggleButton")
+            (button.GetTogglePattern().Toggle() if button.GetPattern(10015)
+             else button.GetInvokePattern().Invoke())
+            opened = True
+            time.sleep(1.2)
+            queue_list = uiautomation.ListControl(
+                searchFromControl=window, AutomationId="PlayQueueListViewAutoplay")
+            if not queue_list.Exists(3):
+                raise RuntimeError("queue panel did not open")
+        try:
+            items = []
+            for row in queue_list.GetChildren():
+                grid = row.GetChildren()
+                grid = grid[0] if grid else None
+                texts = [t.Name for t in (grid.GetChildren() if grid else [])
+                         if t.ControlTypeName == "TextControl" and t.Name]
+                if texts:
+                    duration = texts[-1] if TRACK_DURATION_RE.match(texts[-1]) else ""
+                    items.append({"t": texts[0],
+                                  "a": texts[1] if len(texts) > 2 else "",
+                                  "d": duration})
+        finally:
+            if opened:  # leave the PC's UI the way we found it
+                button = _transport_button(window, "PlayQueueToggleButton")
+                (button.GetTogglePattern().Toggle() if button.GetPattern(10015)
+                 else button.GetInvokePattern().Invoke())
+    return {"ok": True, "items": items}
+
+
 # --------------------------------------------------------------------------
 # HTTP server
 # --------------------------------------------------------------------------
@@ -553,6 +712,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(api_playlists)
         elif self.path.startswith("/modes"):
             self._json(api_modes)
+        elif self.path.startswith("/search?"):
+            query = parse_qs(urlparse(self.path).query).get("q", [""])[0].strip()
+            if query:
+                self._json(lambda: api_search(query))
+            else:
+                self._send(400)
+        elif self.path.startswith("/queue"):
+            self._json(api_queue)
         elif self.path.startswith("/tracks/"):
             index = self.path.rsplit("/", 1)[-1].split("?")[0]
             fresh = "fresh" in self.path
@@ -569,15 +736,25 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404)
 
+    def _read_body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(length) or b"{}")
+
     def do_POST(self) -> None:
         if self.path == "/play":
-            length = int(self.headers.get("Content-Length") or 0)
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
+                body = self._read_body()
                 index, row_id = int(body["pl"]), body["id"]
             except (ValueError, KeyError):
                 return self._send(400)
             return self._json(lambda: api_play(index, row_id))
+        if self.path == "/splay":
+            try:
+                body = self._read_body()
+                query, index, row_id = body["q"], int(body["i"]), body["id"]
+            except (ValueError, KeyError):
+                return self._send(400)
+            return self._json(lambda: api_search_play(query, index, row_id))
 
         parts = self.path.strip("/").split("/")  # cmd/<name>[/<arg>]
         if len(parts) < 2 or parts[0] != "cmd":

@@ -12,6 +12,8 @@ local network:
 - **Volume** — system volume slider and mute
 - **Shuffle & repeat** — toggle shuffle, cycle repeat off/all/one
 - **Playlist browser** — list your playlists, browse tracks, tap to play
+- **Search** — search the Apple Music catalog and play any song
+- **Up Next** — see the current play queue
 
 No accounts, no cloud, no Electron — one Python file and three packages.
 
@@ -75,6 +77,9 @@ exists).
   to force a re-read.
 - Repeat/shuffle state is read from the English UI's accessible names; on
   other UI languages the buttons still work but state may display as off.
+- Search returns the "Songs" section of the results page (the top handful of
+  matches), and the Up Next view is read-only — Apple Music's queue rows
+  don't respond to programmatic activation.
 - First read of a very large playlist (1000+ tracks) is slow, since
   virtualized list rows are collected while scrolling.
 
