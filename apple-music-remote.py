@@ -284,21 +284,34 @@ show('now');renderModes();setInterval(poll,2000);setInterval(tick,500);poll();lo
 # System volume (pycaw / Core Audio)
 # --------------------------------------------------------------------------
 
-def _volume_endpoint():
+def _speakers():
     # ThreadingHTTPServer handles each request on a fresh thread, so COM must
     # be initialized here rather than once at startup.
     CoInitialize()
-    return AudioUtilities.GetSpeakers().EndpointVolume
+    return AudioUtilities.GetSpeakers()
+
+
+def _volume_endpoint():
+    return _speakers().EndpointVolume
 
 
 def get_volume() -> tuple[int, bool]:
     """Return (volume percent 0-100, muted)."""
-    endpoint = _volume_endpoint()
-    return round(endpoint.GetMasterVolumeLevelScalar() * 100), bool(endpoint.GetMute())
+    dev = _speakers()
+    # pycaw exposes volume_percent (PR #109) on newer releases; fall back to the
+    # scalar API on older ones so autostart never crashes on an outdated pycaw.
+    percent = (dev.volume_percent if hasattr(dev, "volume_percent")
+               else dev.EndpointVolume.GetMasterVolumeLevelScalar() * 100)
+    return round(percent), bool(dev.EndpointVolume.GetMute())
 
 
 def set_volume(percent: int) -> None:
-    _volume_endpoint().SetMasterVolumeLevelScalar(max(0, min(100, percent)) / 100, None)
+    percent = max(0, min(100, percent))
+    dev = _speakers()
+    if hasattr(dev, "volume_percent"):
+        dev.volume_percent = percent
+    else:
+        dev.EndpointVolume.SetMasterVolumeLevelScalar(percent / 100, None)
 
 
 def toggle_mute() -> None:
