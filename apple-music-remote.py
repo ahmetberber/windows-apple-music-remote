@@ -652,6 +652,8 @@ class Smtc(threading.Thread):
         self._props_dirty = True
         self._track = None
         self._art_tries = 0
+        self._was_playing: Optional[bool] = None  # None until first observed
+        self._playing_since: Optional[float] = None
 
     def run(self) -> None:
         asyncio.run(self._main())
@@ -712,6 +714,7 @@ class Smtc(threading.Thread):
     def _drop_session(self) -> None:
         session, tokens = self._session, self._tokens
         self._session, self._session_id, self._tokens = None, None, []
+        self._was_playing = self._playing_since = None
         if session is not None and tokens:
             for remove, token in zip((session.remove_media_properties_changed,
                                       session.remove_playback_info_changed,
@@ -771,6 +774,13 @@ class Smtc(threading.Thread):
             self._art_tries = max(0, self._art_tries - 1)
             await self._load_artwork(props, final=self._art_tries == 0)
 
+        now = time.monotonic()
+        if playing and self._was_playing is False:
+            self._playing_since = now  # we saw it resume
+        elif not playing or self._was_playing is None:
+            self._playing_since = None  # paused, or already playing when we looked
+        self._was_playing = playing
+
         seconds = timeline.position.total_seconds()
         age = 0.0
         if playing:
@@ -780,6 +790,12 @@ class Smtc(threading.Thread):
                 age = 0.0
             if not 0 <= age <= 86400:
                 age = 0.0
+            # Right after a resume the app has not re-stamped its timeline yet:
+            # the stamp is as old as the pause, and trusting it would throw the
+            # position far ahead. Playback cannot have run longer than we have
+            # seen it running.
+            if self._playing_since is not None:
+                age = min(age, now - self._playing_since)
         HUB.update({"ok": True, "title": title, "artist": artist, "album": album,
                     "playing": playing, "dur": round(timeline.end_time.total_seconds(), 2),
                     "art": self.artwork[0] if self.artwork else None},
