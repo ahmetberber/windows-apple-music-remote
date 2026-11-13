@@ -6,8 +6,11 @@ iTunes Remote app, which Apple Music for Windows doesn't support.
 A single-file Python server that hosts a mobile-friendly web remote on your
 local network:
 
-- **Now playing** — artwork, title, artist, blurred-artwork backdrop
-- **Transport** — play/pause, next/previous, live progress bar
+- **Now playing** — artwork, title, artist, album, blurred-artwork backdrop
+- **Live updates** — the phone follows track, position, volume and
+  shuffle/repeat changes the moment they happen, including ones made on the PC
+- **Transport** — play/pause, next/previous, smooth progress bar, plus a mini
+  player that stays on screen while you browse
 - **Seeking** — drag the progress bar to jump within the track
 - **Volume** — system volume slider and mute
 - **Shuffle & repeat** — toggle shuffle, cycle repeat off/all/one
@@ -19,9 +22,9 @@ No accounts, no cloud, no Electron — one Python file and a handful of packages
 
 ## Screenshots
 
-| Now playing | Playlists | Playlist tracks |
-|---|---|---|
-| ![Now playing screen](ss-2.jpeg) | ![Playlists screen](ss-3.jpeg) | ![Playlist tracks screen](ss-1.jpeg) |
+| Now playing | Library | Playlist | Playing next |
+|---|---|---|---|
+| ![Now playing screen](screenshots/now-playing.jpg) | ![Library screen](screenshots/library.jpg) | ![Playlist screen](screenshots/playlist.jpg) | ![Playing next sheet](screenshots/queue.jpg) |
 
 ## Why this exists
 
