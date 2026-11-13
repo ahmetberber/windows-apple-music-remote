@@ -1,3 +1,6 @@
-winsdk>=1.0.0b10
+winrt-Windows.Media.Control
+winrt-Windows.Storage.Streams
+winrt-Windows.Foundation
 pycaw>=20240210
+comtypes
 uiautomation>=2.0.20
