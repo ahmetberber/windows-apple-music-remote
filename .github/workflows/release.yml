@@ -1,0 +1,46 @@
+# Builds AppleMusicRemote.exe and publishes it as a GitHub release whenever a
+# version tag is pushed:
+#
+#     git tag -a v2.0.0 -m "release notes go here"
+#     git push origin v2.0.0
+#
+# The tag's message becomes the release notes.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Only what the app needs: PyInstaller bundles every WinRT projection
+      # package that is installed, so a lean environment keeps the .exe small.
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build the executable
+        run: pyinstaller --onefile --console --name AppleMusicRemote apple-music-remote.py
+
+      # The build machine has the packages installed, the user's does not.
+      # Running the frozen program proves its imports were all bundled.
+      - name: Check that the executable starts
+        run: dist\AppleMusicRemote.exe --version
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # checkout leaves the tag without its message; fetch the real one
+          git fetch --force origin "refs/tags/${env:GITHUB_REF_NAME}:refs/tags/${env:GITHUB_REF_NAME}"
+          gh release create $env:GITHUB_REF_NAME dist/AppleMusicRemote.exe --title $env:GITHUB_REF_NAME --notes-from-tag --verify-tag

@@ -18,7 +18,8 @@ local network:
 - **Search** — search the Apple Music catalog and play any song
 - **Up Next** — see the current play queue
 
-No accounts, no cloud, no Electron — one Python file and a handful of packages.
+No accounts, no cloud, no Electron — one Python file and a handful of
+packages, or a single `.exe` if you'd rather not install Python.
 
 ## Screenshots
 
@@ -46,23 +47,40 @@ cursor.
 ## Requirements
 
 - Windows 10/11 with the [Apple Music app](https://apps.microsoft.com/detail/9pfhdd62mxs1)
-- Python 3.11+
 - A phone on the same Wi-Fi network
 
-## Setup
+## Install
+
+### Option 1: download the app (no Python needed)
+
+1. Download `AppleMusicRemote.exe` from the
+   [latest release](https://github.com/ahmetberber/windows-apple-music-remote/releases/latest).
+2. Run it. The first time, Windows may ask two things:
+   - SmartScreen may say "Windows protected your PC", because the file is not
+     code-signed. Choose **More info** → **Run anyway**. The executable is
+     built from this repository by the
+     [release workflow](.github/workflows/release.yml).
+   - Windows Firewall asks whether to allow access. Allow it on **private**
+     networks, or your phone will not be able to connect.
+3. Open the address it prints on your phone.
+
+To start it with Windows, press <kbd>Win</kbd>+<kbd>R</kbd>, enter
+`shell:startup`, and put a shortcut to the `.exe` in the folder that opens.
+
+### Option 2: run from source
+
+Needs Python 3.11 or later.
 
 ```powershell
 pip install -r requirements.txt
 
 # Allow inbound connections once (admin PowerShell):
 New-NetFirewallRule -DisplayName "Apple Music Remote" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow
-```
 
-## Run
-
-```powershell
 python apple-music-remote.py            # or --port 1234
 ```
+
+## Use
 
 Open the printed URL on your phone. On iOS, use Safari's **Add to Home
 Screen** for a fullscreen app-like experience.
@@ -79,8 +97,13 @@ exists).
 - Track lists are cached (on the server until it restarts, and on the phone)
   so playlists open instantly; tap the reload button in a playlist to re-read
   it after you change it in Apple Music.
-- Repeat/shuffle state is read from the English UI's accessible names; on
-  other UI languages the buttons still work but state may display as off.
+- Built and tested with Apple Music's interface in **English**. Search finds
+  the sections of the results page by their English names ("Songs", "Top
+  Results"), so it is expected not to work in other languages, and the repeat
+  state is read from the button's English name, so it may display as off
+  (the button itself still works). Everything else uses language-independent
+  identifiers but has not been tested in another language. Reports and fixes
+  for other languages are welcome.
 - Search returns the "Songs" section of the results page (the top handful of
   matches), and the Up Next view is read-only — Apple Music's queue rows
   don't respond to programmatic activation.

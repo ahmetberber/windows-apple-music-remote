@@ -39,6 +39,7 @@ import json
 import queue
 import re
 import socket
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -57,6 +58,8 @@ from winrt.windows.media.control import (
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions
+
+__version__ = "2.0.0"
 
 DEFAULT_PORT = 8765
 APPLE_MUSIC_WINDOW = "Apple Music"
@@ -1562,17 +1565,45 @@ def lan_ip() -> str:
         sock.close()
 
 
+class Server(ThreadingHTTPServer):
+    # The default (SO_REUSEADDR) lets a second copy bind a port that is
+    # already in use on Windows, and then requests go to either one.
+    allow_reuse_address = False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Web remote for Apple Music on Windows")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
                         help=f"HTTP port to listen on (default: {DEFAULT_PORT})")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
+
+    try:
+        server = Server(("0.0.0.0", args.port), Handler)
+    except OSError as exc:
+        print(f"Could not listen on port {args.port}: {exc}")
+        print("Is Apple Music Remote already running? If not, try another port with --port.")
+        if getattr(sys, "frozen", False):
+            # A double-clicked .exe owns its console window; keep the message readable.
+            try:
+                input("Press Enter to close.")
+            except EOFError:
+                pass
+        raise SystemExit(1)
 
     for worker in (AUDIO, SMTC, UIA):
         worker.start()
 
-    print(f"Open on your phone:  http://{lan_ip()}:{args.port}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
+    try:
+        address = lan_ip()
+    except OSError:  # no network route right now
+        address = "<this PC's IP address>"
+    print(f"Open on your phone:  http://{address}:{args.port}", flush=True)
+    print("Keep this window open while you use the remote. Press Ctrl+C to quit.", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

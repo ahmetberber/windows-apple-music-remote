@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+# PyInstaller
+build/
+dist/
+*.spec
