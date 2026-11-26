@@ -18,16 +18,18 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to commits: a tag can be moved to other code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
 
       # Only what the app needs: PyInstaller bundles every WinRT projection
       # package that is installed, so a lean environment keeps the .exe small.
+      # build-constraints.txt fixes the exact versions.
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt pyinstaller
+        run: python -m pip install -r requirements.txt pyinstaller -c build-constraints.txt
 
       - name: Build the executable
         run: pyinstaller --onefile --console --name AppleMusicRemote apple-music-remote.py
@@ -37,10 +39,16 @@ jobs:
       - name: Check that the executable starts
         run: dist\AppleMusicRemote.exe --version
 
+      # Lets users check that the file they downloaded is the one built here.
+      - name: Write the checksum
+        run: |
+          $hash = (Get-FileHash dist\AppleMusicRemote.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -NoNewline -Encoding ascii dist\AppleMusicRemote.exe.sha256 "$hash  AppleMusicRemote.exe"
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # checkout leaves the tag without its message; fetch the real one
           git fetch --force origin "refs/tags/${env:GITHUB_REF_NAME}:refs/tags/${env:GITHUB_REF_NAME}"
-          gh release create $env:GITHUB_REF_NAME dist/AppleMusicRemote.exe --title $env:GITHUB_REF_NAME --notes-from-tag --verify-tag
+          gh release create $env:GITHUB_REF_NAME dist/AppleMusicRemote.exe dist/AppleMusicRemote.exe.sha256 --title $env:GITHUB_REF_NAME --notes-from-tag --verify-tag
