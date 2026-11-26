@@ -59,16 +59,10 @@ cursor.
    - SmartScreen may say "Windows protected your PC", because the file is not
      code-signed. Choose **More info** → **Run anyway**. The executable is
      built from this repository by the
-     [release workflow](.github/workflows/release.yml). Each release also
-     lists `AppleMusicRemote.exe.sha256`; check that it matches before you
-     run the file:
-     `(Get-FileHash .\AppleMusicRemote.exe).Hash`.
+     [release workflow](.github/workflows/release.yml).
    - Windows Firewall asks whether to allow access. Allow it on **private**
-     networks only, or your phone will not be able to connect. If Windows
-     marks your home Wi-Fi as *Public*, set it to *Private* under
-     Settings → Network & internet → Wi-Fi → (your network).
-3. Open the address it prints on your phone. It ends in `?k=…`, the access
-   key; see [Access key](#access-key).
+     networks, or your phone will not be able to connect.
+3. Open the address it prints on your phone.
 
 To start it with Windows, press <kbd>Win</kbd>+<kbd>R</kbd>, enter
 `shell:startup`, and put a shortcut to the `.exe` in the folder that opens.
@@ -81,8 +75,7 @@ Needs Python 3.11 or later.
 pip install -r requirements.txt
 
 # Allow inbound connections once (admin PowerShell):
-# Private networks only: not on public Wi-Fi such as cafés or hotels.
-New-NetFirewallRule -DisplayName "Apple Music Remote" -Direction Inbound -Protocol TCP -LocalPort 8765 -Profile Private -Action Allow
+New-NetFirewallRule -DisplayName "Apple Music Remote" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow
 
 python apple-music-remote.py            # or --port 1234
 ```
@@ -92,31 +85,13 @@ python apple-music-remote.py            # or --port 1234
 Open the printed URL on your phone. On iOS, use Safari's **Add to Home
 Screen** for a fullscreen app-like experience.
 
-### Access key
-
-The printed URL ends in `?k=…`. That key is what lets a phone in: without
-it, the server answers every request with "Access key needed". The phone
-keeps the key in a cookie after the first visit, so bookmarks and Home Screen
-icons keep working.
-
-- The key is created on first run and kept in
-  `%APPDATA%\AppleMusicRemote\key.txt`, so it stays the same across
-  restarts.
-- Anyone who has the full address can control playback. If you shared it by
-  mistake, start the app with `--new-key`: every phone then has to open the
-  newly printed address.
-- Commands are refused when they come from another website open in the
-  phone's browser, so a web page cannot control the remote for you.
-
 Apple Music must be running (play something once so its media session
 exists).
 
 ## Limitations
 
-- **Plain HTTP on your local network.** The access key keeps out devices that
-  don't have it, but the traffic, the key included, is not encrypted, so
-  someone who can watch your Wi-Fi traffic can read it. Use the remote on
-  networks you trust, and don't expose the port beyond your local network.
+- **No authentication** — anyone on your LAN can control playback. Don't
+  expose the port beyond your local network.
 - Opening a playlist from the phone also navigates the Apple Music window on
   the PC (that's how the UIA bridge works).
 - Track lists are cached (on the server until it restarts, and on the phone)

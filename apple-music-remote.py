@@ -35,12 +35,9 @@ import argparse
 import asyncio
 import ctypes
 import hashlib
-import hmac
 import json
-import os
 import queue
 import re
-import secrets
 import socket
 import sys
 import threading
@@ -48,9 +45,7 @@ import time
 from concurrent.futures import Future
 from ctypes import wintypes
 from datetime import datetime, timezone
-from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import NamedTuple, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -64,20 +59,9 @@ from winrt.windows.media.control import (
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions
 
-__version__ = "2.1.0"
+__version__ = "2.0.0"
 
 DEFAULT_PORT = 8765
-
-# Every request must carry the access key: in the URL (?k=) the first time,
-# then in a cookie. The key is kept across runs so Home Screen bookmarks keep
-# working; --new-key replaces it (and logs out every phone).
-KEY_COOKIE = "amr_key"
-KEY_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
-
-# Resource limits for untrusted network input.
-MAX_BODY = 4096                    # /play and /splay bodies are a few dozen bytes
-MAX_CONNECTIONS = 64               # open connections, all clients together
-MAX_CONNECTIONS_PER_CLIENT = 16    # one phone needs a handful (page, SSE, commands)
 APPLE_MUSIC_WINDOW = "Apple Music"
 APPLE_MUSIC_WINDOW_CLASS = "WinUIDesktopWin32WindowClass"
 SCRUBBER_AUTOMATION_ID = "LCDScrubber"
@@ -919,11 +903,7 @@ class Uia(threading.Thread):
         """Run ``fn`` on the UIA thread and wait for its result."""
         future: Future = Future()
         self._jobs.put((fn, args, future))
-        try:
-            return future.result(timeout)
-        except TimeoutError:
-            future.cancel()  # nobody waits for it any more: don't run it later
-            raise
+        return future.result(timeout)
 
     def post(self, fn, *args) -> None:
         self._jobs.put((fn, args, None))
@@ -952,8 +932,6 @@ class Uia(threading.Thread):
                         except Exception:
                             pass
                     continue
-                if future is not None and not future.set_running_or_notify_cancel():
-                    continue  # the caller timed out while this job was queued
                 try:
                     result = fn(*args)
                 except Exception as exc:
@@ -1452,42 +1430,11 @@ def _json_bytes(value) -> bytes:
 
 PAGE_BYTES = PAGE.encode()
 
-DENIED_BYTES = (
-    "<!doctype html><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>Music Remote</title>"
-    "<body style='font:16px system-ui;padding:2em;max-width:30em'>"
-    "<h1>Access key needed</h1>"
-    "<p>Open the full address shown in the Apple Music Remote window on the PC. "
-    "It ends in <code>?k=&hellip;</code>.</p>"
-).encode()
-
-
-def load_key(rotate: bool = False) -> str:
-    """The access key phones must present, created on first run."""
-    path = Path(os.environ.get("APPDATA") or Path.home()) / "AppleMusicRemote" / "key.txt"
-    if not rotate:
-        try:
-            key = path.read_text(encoding="ascii").strip()
-            if KEY_RE.fullmatch(key):
-                return key
-        except (OSError, UnicodeDecodeError):
-            pass
-    key = secrets.token_urlsafe(18)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(key, encoding="ascii")
-    except OSError:
-        print(f"Could not save the access key to {path}; it changes on every start.")
-    return key
-
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"        # keep-alive: no TCP handshake per tap
     disable_nagle_algorithm = True       # small responses must not wait on Nagle
     timeout = 60                         # reap idle keep-alive connections
-    key = ""                             # set by main()
-    _set_cookie = False                  # per request: key came in the URL
 
     def _send(self, code: int, body: bytes = b"", ctype: str = "text/plain",
               cache: str = "no-store") -> None:
@@ -1495,59 +1442,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
-        if self._set_cookie:
-            self.send_header("Set-Cookie", f"{KEY_COOKIE}={self.key}; Max-Age=31536000; "
-                                           "Path=/; HttpOnly; SameSite=Strict")
-        if self.close_connection:
-            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
-
-    def _cookie_key(self) -> str:
-        jar = SimpleCookie()
-        try:
-            jar.load(self.headers.get("Cookie") or "")
-        except CookieError:
-            return ""
-        morsel = jar.get(KEY_COOKIE)
-        return morsel.value if morsel else ""
-
-    def _allowed(self, query: dict) -> bool:
-        """Check the access key (URL on first open, cookie after); reply if it fails."""
-        given = query.get("k", [""])[0]
-        self._set_cookie = False
-        from_url = bool(given)
-        if not from_url:
-            given = self._cookie_key()
-        if given and hmac.compare_digest(given.encode(), self.key.encode()):
-            self._set_cookie = from_url
-            return True
-        self.close_connection = True  # any request body stays unread
-        self._send(401, DENIED_BYTES, "text/html; charset=utf-8")
-        return False
-
-    def _same_origin(self) -> bool:
-        """Browsers send Origin on POST; refuse commands sent by other sites."""
-        origin = self.headers.get("Origin")
-        if origin is None or urlparse(origin).netloc == self.headers.get("Host"):
-            return True
-        self.close_connection = True
-        self._send(403)
-        return False
-
-    def _body(self) -> Optional[bytes]:
-        """Read a small request body; None (after replying) if it is unacceptable."""
-        header = (self.headers.get("Content-Length") or "0").strip()
-        if self.headers.get("Transfer-Encoding") or not (header.isascii() and header.isdigit()):
-            self.close_connection = True
-            self._send(400)
-            return None
-        length = int(header)
-        if length > MAX_BODY:  # refuse before reading: read(n) allocates n bytes up front
-            self.close_connection = True
-            self._send(413)
-            return None
-        return self.rfile.read(length) if length else b""
 
     def _json(self, fn, *args) -> None:
         try:
@@ -1584,8 +1480,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         url = urlparse(self.path)
         path, query = url.path, parse_qs(url.query)
-        if not self._allowed(query):
-            return
         if path == "/":
             self._send(200, PAGE_BYTES, "text/html; charset=utf-8", "no-cache")
         elif path == "/events":
@@ -1618,13 +1512,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404)
 
     def do_POST(self) -> None:
-        url = urlparse(self.path)
-        if not (self._same_origin() and self._allowed(parse_qs(url.query))):
-            return
-        raw = self._body()
-        if raw is None:
-            return
-        path = url.path
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        path = urlparse(self.path).path
         if path in ("/play", "/splay"):
             try:
                 body = json.loads(raw or b"{}")
@@ -1680,53 +1570,13 @@ class Server(ThreadingHTTPServer):
     # already in use on Windows, and then requests go to either one.
     allow_reuse_address = False
 
-    def __init__(self, *args, **kwargs) -> None:
-        self._open_lock = threading.Lock()
-        self._open_total = 0
-        self._open: dict[str, int] = {}
-        super().__init__(*args, **kwargs)
-
-    def verify_request(self, request, client_address) -> bool:
-        """Turn away connections over the limits instead of starting a thread each."""
-        host = client_address[0]
-        with self._open_lock:
-            if (self._open_total >= MAX_CONNECTIONS
-                    or self._open.get(host, 0) >= MAX_CONNECTIONS_PER_CLIENT):
-                return False  # the caller closes the socket
-            self._open_total += 1
-            self._open[host] = self._open.get(host, 0) + 1
-        return True
-
-    def _closed(self, host: str) -> None:
-        with self._open_lock:
-            self._open_total -= 1
-            self._open[host] -= 1
-            if not self._open[host]:
-                del self._open[host]
-
-    def process_request(self, request, client_address) -> None:
-        try:
-            super().process_request(request, client_address)
-        except BaseException:  # the thread never started
-            self._closed(client_address[0])
-            raise
-
-    def process_request_thread(self, request, client_address) -> None:
-        try:
-            super().process_request_thread(request, client_address)
-        finally:
-            self._closed(client_address[0])
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Web remote for Apple Music on Windows")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
                         help=f"HTTP port to listen on (default: {DEFAULT_PORT})")
-    parser.add_argument("--new-key", action="store_true",
-                        help="replace the access key; phones must open the new address")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
-    Handler.key = load_key(rotate=args.new_key)
 
     try:
         server = Server(("0.0.0.0", args.port), Handler)
@@ -1748,9 +1598,7 @@ def main() -> None:
         address = lan_ip()
     except OSError:  # no network route right now
         address = "<this PC's IP address>"
-    print(f"Open on your phone:  http://{address}:{args.port}/?k={Handler.key}", flush=True)
-    print("Anyone with this address can control playback; run with --new-key to change it.",
-          flush=True)
+    print(f"Open on your phone:  http://{address}:{args.port}", flush=True)
     print("Keep this window open while you use the remote. Press Ctrl+C to quit.", flush=True)
     try:
         server.serve_forever()
