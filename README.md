@@ -64,7 +64,9 @@ cursor.
      run the file:
      `(Get-FileHash .\AppleMusicRemote.exe).Hash`.
    - Windows Firewall asks whether to allow access. Allow it on **private**
-     networks only, or your phone will not be able to connect.
+     networks only, or your phone will not be able to connect. If Windows
+     marks your home Wi-Fi as *Public*, set it to *Private* under
+     Settings → Network & internet → Wi-Fi → (your network).
 3. Open the address it prints on your phone. It ends in `?k=…`, the access
    key; see [Access key](#access-key).
 

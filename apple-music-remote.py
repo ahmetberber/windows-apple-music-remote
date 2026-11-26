@@ -64,7 +64,7 @@ from winrt.windows.media.control import (
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 DEFAULT_PORT = 8765
 
